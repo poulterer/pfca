@@ -1,0 +1,447 @@
+#!/bin/bash
+# 2016 by Steven Blair - released under GPL v3 - see license file
+
+do_debug ()
+	{
+	set -xv
+	set -o xtrace
+	export PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
+	}
+
+set_format ()
+	{
+	# format variables
+	bold="\033[1m"
+	norm="\033[0m"
+	head="\033[1m\033[4m"
+	rpt_fmt1="${bold}%s %s${norm}\n"
+	rpt_fmt2="${head}%-10s${norm}%6s${head}%s${norm}\n"
+	}	
+
+set_tuning ()
+	{
+	# tuning variables
+	# Number of days to scan for bad IP addresses
+	then_days="3"
+	# Required bad IP count to add or update client_access
+	badip_count="10"
+	# Required spam count to add or update client_access
+	spam_count="3"
+	# IP address age in days to expire
+	expired="90"
+	}
+
+set_exec ()
+	{
+	# script execution variables - do not modify unless version controlled. TEST before replacing working script.
+	logs="/var/log/maillog*"
+	client="/etc/postfix/client_access"
+	ipwl="/etc/postfix/pfca_ignore"
+	db="$(awk -v c="$client" '$0 ~ c {gsub(/\:/, " "); print $2}' /etc/postfix/main.cf)"
+	ds="#$(date +%F)"
+	bak="$(date +%FT%T)"
+	expdate=$(date +%F -d "$expired days ago")
+	ipaddr="^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$"
+	reject_msg="521 Spammers and scammers are not welcome."
+	logfile="/var/log/pfca.log"
+	mail_from="postfix@parergy.com"
+	mail_to="root@parergy.com"
+	# script execution variables - do not modify unless version controlled. TEST before replacing working script.
+	}
+
+check_reqs ()
+	{
+	if [[ $EUID -ne 0 ]]; then
+		printf "\n${bold}This script may only be run by root.\n${norm}"
+		show_help
+		exit 1
+	elif [ ! -f "$client" ]; then
+		printf "\n$client cannot be found. Please correct and try again.\n\n"
+		exit 1
+	fi
+	}
+
+do_regx ()
+	{
+	i="0"
+	regx="^("
+	while [ $i -le "$then_days" ]; do
+		dd=$(date "+%b %e" -d "$i days ago")
+		if [ $i -lt "$then_days" ]; then
+			regx="$regx$dd|"
+		else
+			spam_regx="$regx$dd).*SPAMMY"
+			badip_regx="$regx$dd).*([Bb]locked|rejected)"
+		fi
+		((i++))
+	done
+	}
+
+do_badip ()
+	{
+	declare -ga badip=$(
+		awk -v r="$badip_regx" '$0 ~ r && !/Greylisted/ && !/Exceeded/ {gsub(/\[|\]/, " "); print $13 }' $logs |
+		sort -n |
+		uniq -c |
+		awk -v c=$badip_count '$1 >= c {print $2}'
+	)
+	}
+
+do_spamip ()
+	{
+	declare -ga spamip=$(
+		awk -v r="$spam_regx" '$0 ~ r {gsub(/\[|\]/, " "); print $12 }' $logs |
+		sort -n |
+		uniq -c |
+		awk -v s="$spam_count" '$1 >= s {print $2}'
+	)
+	}
+
+do_manadd ()
+	{
+	ip="$1"
+	if egrep -q "$ipaddr" <<< "$ip" ; then
+		declare -ga badip=("$ip")
+	else
+		printf "\n${bold}%s is an invalid IP address. Please check your input.${norm}\n" "$ip"
+		show_help
+		exit 1
+	fi
+	}
+
+do_mandel ()
+	{
+	ip="$1"
+	if egrep -q "$ipaddr" <<< "$ip" ; then
+		if egrep -q $ip $client; then
+			flag="true"
+			l1="$(sed -n /${ip}/= $client)"
+			l2="$(( l1-- ))"
+			sed -i "${l1},${l2}d" "$client"
+			del_msg+=$(printf "%-15s %s\n" "$l2" "$l1")"\n"
+			del="1"
+		else
+			printf "\n${bold}%s is not in %s. Please check your input.${norm}\n\n" "$ip" "$client"
+			exit 1
+		fi
+	else
+		printf "\n${bold}%s is an invalid IP address. Please check your input.${norm}\n\n" "$ip"
+		show_help
+		exit 1
+	fi
+	}
+
+do_findip ()
+	{
+	ip="$1"
+	if egrep -q "$ip" "$client" ; then
+		ln="$(sed -n /${ip}/= $client)"
+		(( ln-- ))
+		ipds=$(awk -v n="$ln" 'FNR==n' "$client")
+		printf "\nIP address %s is in %s with datestamp %s.\n\n" "$ip" "$client" "$ipds"
+	else
+		printf "\nIP address %s is not in %s.\n\n" "$ip" "$client"
+	fi
+	}
+
+do_addupd ()
+	{
+	add="0"
+	upd="0"
+	if [ -n "$badip" ]; then
+		if [ -n "$spamip" ]; then
+			badip=("${badip[@]}" "${spamip[@]}")
+		fi
+	else
+		return 1
+	fi
+	for i in ${badip[@]}; do
+		if egrep -q "$ipaddr" <<< "$i" ; then
+			if ! egrep -q "^$i$" $ipwl ; then
+				if egrep -q $i $client; then
+					ln="$(sed -n /${i}/= $client)"
+					(( ln-- ))
+					ods=$(sed -n ${ln}{p} $client)
+					if [ "$ods" != "$ds" ]; then
+						flag="true"
+						if [ "$state" = "execute" ]; then
+							if [ ! -e "$client.$bak" ]; then
+								cp -f "$client" "$client.$bak"
+							fi
+							sed -i "${ln}s/^#.*$/${ds}/g" "$client"
+						fi
+						upd_msg+=$(printf "%-15s %s < %s\n" "$i" "$ods" "$ds")"\n"
+						(( upd++ ))
+					fi
+				elif ! egrep -q $i $client; then
+					flag="true"
+					if [ "$state" = "execute" ]; then
+						if [ ! -e "$client.$bak" ]; then
+							cp -f "$client" "$client.$bak"
+						fi
+						printf "$ds\n%-17s%s\n" "$i" "$reject_msg" >> "$client"
+					fi
+					add_msg+=$(printf "%-15s %s\n" "$i" "$ds")"\n"
+					(( add++ ))
+				fi
+			fi
+		else
+			printf "%s is an invalid IP address, ignoring.\n" "$i"
+		fi
+	done
+	}
+
+do_expired ()
+	{
+	exp="0"
+	declare -a del="$(awk -v e="#$expdate" '$0 <= e {l1=$1;getline;l2=$1; printf "%s\n%s\n", l1, l2}' "$client")"
+	if [ -z "$del" ]; then
+		return 1
+	else
+		exp_msg="$(awk -v e="#$expdate" '$0 <= e {l1=$1;getline;l2=$1; printf "%-15s %s\n", l2, l1}' <( echo "$del" ))\n"
+		flag="true"
+		for i in ${del[@]}; do
+			if [ "$state" = "execute" ]; then
+				sed -i "/$i/d" "$client"
+			fi
+			(( exp++ ))
+		done
+		exp="$(( exp/2 ))"
+	fi
+	}
+
+do_postmap ()
+	{
+	if [ "$flag" = "true" ]; then
+		/usr/sbin/postmap "$db:$client"
+		/usr/sbin/postfix reload
+	fi
+	}
+
+do_status ()
+	{
+	status="$(systemctl is-active postfix)"
+	if [ "$status" = "active" ]; then
+		return 0
+	elif [ "$status" = "inactive" ]; then
+		return 1
+	fi
+	}
+
+do_verify ()
+	{
+	if do_status ; then
+		if [ "$flag" = "true" ]; then
+			msg=$(printf "%s\n%s\n\n" "$bak" "Postfix is running normally after pfca.")"\n"
+		else
+			msg=$(printf "%s\n%s\n\n" "$bak" "No activity.")"\n"
+		fi
+		rm -f "$client.$bak"
+	elif ! do_status ; then
+		mv -f "$client" "$client.$bak.BAD"
+		cp -f "$client.$bak" "$client"
+		do_postmap
+		if ! do_status ; then
+			mtf="$bak$(printf \nPostfix is down after pfca. The last fifty lines of /var/log/maillog follow and previous activity is below.\n)"
+			msg="$mtf$(printf $(tail -n50 /var/log/maillog)\n)$msg"
+		elif do_status ; then
+			msg="$bak$(printf \nA pfca problem required reverting $client but Postfix is now running normally. Please review logs and files.\n)$msg"
+		fi
+	fi
+	}
+
+do_output ()
+	{
+	if [ "$state" = "execute" ]; then
+		if [ -n "$add_msg" ]; then
+			msg+="Added: $add""\n""$add_msg"
+		fi
+		if [ -n "$upd_msg" ]; then
+			msg+="Updated: $upd""\n""$upd_msg"
+		fi
+		if [ -n "$exp_msg" ]; then
+			msg+="Expired: $exp""\n""$exp_msg"
+		fi
+		if [ -n "$del_msg" ]; then
+			msg+="Deleted: $del""\n""$del_msg"
+		fi
+		if [ "$mailopt" = "true" ]; then
+			echo -e "$msg" | mailx -s "Postfix pfca report" -r "$mail_from" "$mail_to"
+		fi
+		if [ "$logopt" = "true" ]; then
+			echo -e "$msg" >> "$logfile"
+		fi
+	elif [ "$state" = "report" ]; then
+		if [ "$flag" = "true" ]; then
+			echo
+			if [ -n "$add_msg" ]; then
+				printf "$rpt_fmt1" "Pending adds:" "$add"
+				printf "$rpt_fmt2" "IP address" " " "Datestamp"
+				printf "$add_msg\n"
+			fi
+			if [ -n "$upd_msg" ]; then
+				printf "$rpt_fmt1" "Pending updates:" "$upd"
+				printf "$rpt_fmt2" "IP address" " " "Datestamp"
+				printf "$upd_msg\n"
+			fi
+			if [ -n "$exp_msg" ]; then
+				printf "$rpt_fmt1" "Pending expires:" "$exp"
+				printf "$rpt_fmt2" "IP address" " " "Datestamp"
+				printf "$exp_msg\n"
+			fi
+		elif [ "$flag" != "true" ]; then
+			printf "\n${bold}%s${norm}\n\n" "No IP addresses or datestamps pending add, update or expire."
+		fi
+	fi
+	}
+
+do_sortca ()
+	{
+	awk '/^#.*/ {print $0}' "$client" | sort -rn | uniq -c
+	}
+
+do_reverse ()
+	{
+	if [ -z "$1" ]; then
+		declare -a iplist="$(awk '!/^#/ {print $1}' $client)"
+	else
+		lines="$1"
+		if [[ $lines =~ ^[0-9]+$ ]]; then
+			declare -a iplist="$(tac $client | awk '!/^#/ {print $1}')"
+		else
+			printf "Argument is not an integer.\n"
+			return
+		fi
+	fi
+	counter=0
+	for i in ${iplist[@]}; do
+	    arpa="$(awk -F. '{print $4"."$3"."$2"."$1}' <<< $i)"
+		rev=$(dig @8.8.8.8 -x $i | awk -v ip=^$arpa -v p=$i '($0 ~ ip) {printf "%-16sis %s\n", p, $5}')
+		if [ -n "$lines" ] && [ -n "$rev" ]; then
+			if [ "$counter" -ge "$lines" ]; then
+				return
+			else
+				printf "$rev\n"
+				(( counter++ ))
+			fi
+		elif [ -n "$rev" ]; then
+			printf "$rev\n"
+		fi
+	done
+	}
+
+show_vars ()
+	{
+	printf "\n%-30s%3d\n" "Client_access IP records:" "$(( $( cat $client | wc -l ) /2 ))"
+	printf "\n%-30s%3d\n" "Maillog scan range (days):" "$then_days"
+	printf "%-30s%3d\n" "Bad IP threshold value:" "$badip_count"
+	printf "%-30s%3d\n" "Spam IP threshold value:" "$spam_count"
+	printf "%-30s%3d\n\n" "Expired entry age (days):" "$expired"
+	}
+
+show_help ()
+	{
+	printf "\n${bold}%-7s${norm}%s\n" "pfca" "A script that finds repeated rejections in Postfix maillogs and"
+	printf "%7s%s\n" " " "adds or updates the client_access file, denying access at the"
+	printf "%7s%s\n" " " "earliest possible point. It also expires and removes entries"
+	printf "%7s%s\n" " " "older than a preset interval. Typically run by root crontab but"
+	printf "%7s%s\n" " " "can be run manually to add or delete an IP, show or process"
+	printf "%7s%s\n" " " "pending actions, or display program and db information."
+	printf "\n%7s%-4s%s\n" " " "-a" "Manually add an IP address and datestamp."
+	printf "%11s%s\n" " " "Syntax is: pfca -a <IP_address>"
+	printf "%7s%-4s%s\n" " " "-d" "Manually delete an IP address and datestamp."
+	printf "%11s%s\n" " " "Syntax is: pfca -d <IP_address>"
+	printf "%7s%-4s%s\n" " " "-f" "Verify an IP address is in client_access."
+	printf "%11s%s\n" " " "Syntax is: pfca -f <IP_address>"
+	printf "%7s%-4s%s\n" " " "-l" "Log actions to $logfile. Must precede and accompany -a, d or x."
+	printf "%7s%-4s%s\n" " " "-m" "Send email of actions. Must precede and accompany -a, d or x."
+	printf "%7s%-4s%s\n" " " "-p" "Show IP address(es) and datestamp(s) pending"
+	printf "%11s%s\n" " " "add, update or expire."
+	printf "%7s%-4s%s\n" " " "-r" "Show list of reverse lookups in client_access."
+	printf "%7s%-4s%s\n" " " "-R" "Show last n reverse lookups in client_access."
+	printf "%11s%s\n" " " "Note: Lookups are reverse order."
+	printf "%11s%s\n" " " "Syntax is: pfca -R <integer>"
+	printf "%7s%-4s%s\n" " " "-s" "Show sorted list of effective dates in client_access."
+	printf "%7s%-4s%s\n" " " "-t" "Troubleshoot in debug mode. Set first before other arguments."
+	printf "%7s%-4s%s\n" " " "-x" "Perform pending add(s), update(s) or expire(s)."
+	printf "%7s%-4s%s\n" " " "-v" "Show variable settings and IP record count."
+	printf "%7s%-4s%s\n" " " "-h" "Show this message."
+	printf "\n%7s%s\n\n" " " "Any other or no argument - show this message."
+	}
+
+set_format
+set_tuning
+set_exec
+check_reqs
+
+while getopts "a:d:f:lmprR:stxvh" OPTION
+	do
+		case "$OPTION" in
+			a)
+				state="execute"
+				do_manadd "$OPTARG"
+				do_addupd
+				do_postmap
+				do_verify
+				do_output
+			;;
+			d)
+				state="execute"
+				do_mandel "$OPTARG"
+				do_postmap
+				do_verify
+				do_output
+			;;
+			f)
+				do_findip "$OPTARG"
+			;;
+			l)
+				logopt="true"
+			;;
+			m)
+				mailopt="true"
+			;;
+			p)
+				state="report"
+				do_regx
+				do_badip
+				do_spamip
+				do_addupd
+				do_expired
+				do_output
+			;;
+			r)
+				do_reverse
+			;;
+			R)
+				do_reverse "$OPTARG"
+			;;
+			s)
+				do_sortca
+			;;
+			t)
+				do_debug
+			;;
+			x)
+				state="execute"
+				do_regx
+				do_badip
+				do_spamip
+				do_addupd
+				do_expired
+				do_postmap
+				do_verify
+				do_output
+			;;
+			v)
+				show_vars
+			;;
+			h)
+				show_help
+			;;
+		esac
+	done
+
+if [ $# -eq 0 ]; then
+	show_help
+fi
