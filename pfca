@@ -160,7 +160,7 @@ do_addupd ()
 		if egrep -q "$ipaddr" <<< "$i" ; then
 			if ! egrep -q "^$i$" $ipwl ; then
 				if egrep -q $i $client; then
-					ln="$(sed -n /${i}/= $client)"
+					ln="$(sed -n /${i}/= {p} $client)"
 					(( ln-- ))
 					ods=$(sed -n ${ln}{p} $client)
 					if [ "$ods" != "$ds" ]; then
