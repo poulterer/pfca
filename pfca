@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright © 2016 by Steven Blair - all rights reserved
+# Copyright ï¿½ 2016 by Steven Blair - all rights reserved
 
 do_debug ()
 	{
@@ -16,6 +16,9 @@ set_format ()
 	head="\033[1m\033[4m"
 	rpt_fmt1="${bold}%s %s${norm}\n"
 	rpt_fmt2="${head}%-10s${norm}%6s${head}%s${norm}\n"
+	script_name="$(basename $0)"
+	spacer="%-$(($(expr length $script_name)+4))s"
+	spacer2="%$(($(expr length $script_name)+8))s"
 	}	
 
 set_tuning ()
@@ -345,32 +348,31 @@ show_vars ()
 
 show_help ()
 	{
-	printf "\n${bold}%-7s${norm}%s\n" "pfca" "A script that finds repeated rejections in Postfix maillogs and"
-	printf "%7s%s\n" " " "adds or updates the client_access file, denying access at the"
-	printf "%7s%s\n" " " "earliest possible point. It also expires and removes entries"
-	printf "%7s%s\n" " " "older than a preset interval. Typically run by root crontab but"
-	printf "%7s%s\n" " " "can be run manually to add or delete an IP, show or process"
-	printf "%7s%s\n" " " "pending actions, or display program and db information."
-	printf "\n%7s%-4s%s\n" " " "-a" "Manually add an IP address and datestamp."
-	printf "%11s%s\n" " " "Syntax is: pfca -a <IP_address>"
-	printf "%7s%-4s%s\n" " " "-d" "Manually delete an IP address and datestamp."
-	printf "%11s%s\n" " " "Syntax is: pfca -d <IP_address>"
-	printf "%7s%-4s%s\n" " " "-f" "Verify an IP address is in client_access."
-	printf "%11s%s\n" " " "Syntax is: pfca -f <IP_address>"
-	printf "%7s%-4s%s\n" " " "-l" "Log actions to $logfile. Must precede and accompany -a, d or x."
-	printf "%7s%-4s%s\n" " " "-m" "Send email of actions. Must precede and accompany -a, d or x."
-	printf "%7s%-4s%s\n" " " "-p" "Show IP address(es) and datestamp(s) pending"
-	printf "%11s%s\n" " " "add, update or expire."
-	printf "%7s%-4s%s\n" " " "-r" "Show list of reverse lookups in client_access."
-	printf "%7s%-4s%s\n" " " "-R" "Show last n reverse lookups in client_access."
-	printf "%11s%s\n" " " "Note: Lookups are reverse order."
-	printf "%11s%s\n" " " "Syntax is: pfca -R <integer>"
-	printf "%7s%-4s%s\n" " " "-s" "Show sorted list of effective dates in client_access."
-	printf "%7s%-4s%s\n" " " "-t" "Troubleshoot in debug mode. Set first before other arguments."
-	printf "%7s%-4s%s\n" " " "-x" "Perform pending add(s), update(s) or expire(s)."
-	printf "%7s%-4s%s\n" " " "-v" "Show variable settings and IP record count."
-	printf "%7s%-4s%s\n" " " "-h" "Show this message."
-	printf "\n%7s%s\n\n" " " "Any other or no argument - show this message."
+	printf "\n${bold}$spacer${norm}%s\n" "$script_name" "A script that finds repeated rejections in Postfix maillogs and"
+	printf "$spacer%s\n" " " "adds or updates the client_access file, denying access at the"
+	printf "$spacer%s\n" " " "earliest possible point. It also expires and removes entries"
+	printf "$spacer%s\n" " " "older than a preset interval. Typically run by root crontab but"
+	printf "$spacer%s\n" " " "can be run manually to add or delete an IP, show or process"
+	printf "$spacer%s\n" " " "pending actions, or display program and db information."
+	printf "\n$spacer%-4s%s\n" " " "-a" "Manually add an IP address and datestamp."
+	printf "$spacer2%s\n" " " "Syntax is: pfca -a <IP_address>"
+	printf "$spacer%-4s%s\n" " " "-d" "Manually delete an IP address and datestamp."
+	printf "$spacer2%s\n" " " "Syntax is: pfca -d <IP_address>"
+	printf "$spacer%-4s%s\n" " " "-f" "Verify an IP address is in client_access."
+	printf "$spacer2%s\n" " " "Syntax is: pfca -f <IP_address>"
+	printf "$spacer%-4s%s\n" " " "-l" "Log actions to $logfile. Must precede and accompany -a, d or x."
+	printf "$spacer%-4s%s\n" " " "-m" "Send email of actions. Must precede and accompany -a, d or x."
+	printf "$spacer%-4s%s\n" " " "-p" "Show IP address(es) and datestamp(s) pending"
+	printf "$spacer2%s\n" " " "add, update or expire."
+	printf "$spacer%-4s%s\n" " " "-r" "Show list of reverse lookups in client_access."
+	printf "$spacer%-4s%s\n" " " "-R" "Show last n reverse lookups in client_access."
+	printf "$spacer2%s\n" " " "Note: Lookups are reverse order."
+	printf "$spacer2%s\n" " " "Syntax is: pfca -R <integer>"
+	printf "$spacer%-4s%s\n" " " "-s" "Show sorted list of effective dates in client_access."
+	printf "$spacer%-4s%s\n" " " "-t" "Troubleshoot in debug mode. Set first before other arguments."
+	printf "$spacer%-4s%s\n" " " "-x" "Perform pending add(s), update(s) or expire(s)."
+	printf "$spacer%-4s%s\n" " " "-v" "Show variable settings and IP record count."
+	printf "\n$spacer2%s\n\n" " " "Any other or no argument - show this message."
 	}
 
 set_format
