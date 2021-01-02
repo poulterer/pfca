@@ -1,5 +1,4 @@
 #!/bin/bash
-# Copyright © 2016 by Steven Blair - all rights reserved
 
 do_debug ()
 	{
@@ -87,7 +86,6 @@ do_badip ()
 	)
 	}
 
-#		awk -v r="$spam_regx" '$0 ~ r {gsub(/\[|\]/, " "); print $12 }' $logs |
 do_spamip ()
 	{
 	declare -ga spamip=$(
@@ -299,7 +297,13 @@ do_output ()
 
 do_sortca ()
 	{
-	awk '/^#.*/ {print $0}' "$client" | sort -rn | uniq -c
+	mapfile -t sortdates <<< "$(awk '/^#.*/ {gsub("#",""); print $0}' "$client" | sort -n | uniq -c)"
+	for ((i = 0; i < ${#sortdates[@]}; i++)); do
+		count=$(awk '{print $1}' <<< "${sortdates[$i]}")
+        date=$(awk '{print $2}' <<< "${sortdates[$i]}")
+		date=$(date --date "$date +$expired days" +%F)
+		awk '{printf "%4s  %s\n", $1, $2}' <<< $(echo $count $date)
+	done
 	}
 
 do_reverse ()
@@ -319,7 +323,7 @@ do_reverse ()
 	record="$(( $( cat $client | wc -l ) /2 ))"
 	for i in ${iplist[@]}; do
 	    arpa="$(awk -F. '{print $4"."$3"."$2"."$1}' <<< $i)"
-		rev=$(dig @8.8.8.8 -x $i | awk -v ip=^$arpa -v p=$i '($0 ~ ip) {printf "%-16sis %s\n", p, $5}')
+		rev=$(dig -x $i | awk -v ip=^$arpa -v p=$i '($0 ~ ip) {printf "%-16sis %s\n", p, $5}')
 		if [ -n "$lines" ] && [ -n "$rev" ]; then
 			if [ "$counter" -ge "$lines" ]; then
 				return
@@ -365,7 +369,7 @@ show_help ()
 	printf "%7s%-4s%s\n" " " "-R" "Show last n reverse lookups in client_access."
 	printf "%11s%s\n" " " "Note: Lookups are reverse order."
 	printf "%11s%s\n" " " "Syntax is: pfca -R <integer>"
-	printf "%7s%-4s%s\n" " " "-s" "Show sorted list of effective dates in client_access."
+	printf "%7s%-4s%s\n" " " "-s" "Show sorted list of expiration dates in client_access."
 	printf "%7s%-4s%s\n" " " "-t" "Troubleshoot in debug mode. Set first before other arguments."
 	printf "%7s%-4s%s\n" " " "-x" "Perform pending add(s), update(s) or expire(s)."
 	printf "%7s%-4s%s\n" " " "-v" "Show variable settings and IP record count."
