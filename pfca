@@ -305,7 +305,11 @@ do_sortca ()
 		count=$(awk '{print $1}' <<< "${sortdates[$i]}")
 		date=$(awk '{print $2}' <<< "${sortdates[$i]}")
 		date=$(date --date "$date +$expired days" +%F)
-		awk '{printf "%4s  %s\n", $1, $2}' <<< $(echo $count $date)
+		if [[ "$count" -gt 3 ]]; then
+			awk '{printf "\033[1m%4s  %s\033[0m\n", $1, $2}' <<< $(echo $count $date)
+		else
+			awk '{printf "%4s  %s\n", $1, $2}' <<< $(echo $count $date)
+		fi
 	done
 	}
 
